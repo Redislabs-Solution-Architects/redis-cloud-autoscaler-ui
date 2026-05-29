@@ -28,16 +28,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 # Runtime deps:
-#  - libevent / openssl / zlib  → memtier_benchmark needs these at runtime
-#  - redis-tools                → safe FLUSHDB + DBSIZE
-#  - curl / jq                  → REST API calls + diagnostics
-#  - docker.io (CLI only)       → docker logs autoscaler (sock mounted ro)
-#  - gettext-base (envsubst)    → not used at runtime; Python does substitution
+#  - libevent (+ openssl) / zlib / pcre → memtier_benchmark needs these at runtime
+#  - redis-tools                        → safe FLUSHDB + DBSIZE
+#  - curl / jq                          → REST API calls + diagnostics
+#  - docker.io (CLI only)               → docker logs autoscaler (sock mounted ro)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        libevent-2.1-7 libssl3 zlib1g libpcre3 \
+        libevent-2.1-7 libevent-openssl-2.1-7 libssl3 zlib1g libpcre3 \
         redis-tools curl jq ca-certificates \
         docker.io \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+
+# Smoke-test memtier so the build fails immediately if a shared library is missing.
+RUN memtier_benchmark --version
 
 COPY --from=memtier-builder /src/memtier_benchmark /usr/local/bin/memtier_benchmark
 
