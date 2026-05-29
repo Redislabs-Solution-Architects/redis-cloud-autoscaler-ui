@@ -42,16 +42,19 @@ cd redis-cloud-autoscaler-ui
 ## Passo 2 · Coletar os dados do seu Redis Cloud
 
 Abra o console em `https://cloud.redis.io` → seu banco → aba **Configuration**.
-Anote os 6 valores abaixo (vamos colar todos no `.env` no próximo passo):
+Anote os **5 valores obrigatórios** abaixo:
 
 | O que você precisa | Onde achar |
 |---|---|
 | **Endpoint privado** (host:porta) | aba *Configuration* → seção *Endpoints* → "Private endpoint" |
 | **Senha do banco** | aba *Security* → "Default user password" |
-| **Endpoint interno** (host, sem porta) | **Pode deixar em branco** — a UI descobre sozinho via API. Se quiser setar manualmente: campo `prometheusEndpoint` da subscription. Pegue via `curl -H "x-api-key: $ACCT" -H "x-api-secret-key: $USER" https://api.redislabs.com/v1/subscriptions/$SUBID \| jq -r .prometheusEndpoint` (depois remova o `:8070` do fim) |
 | **Subscription ID** (numérico) | na URL do console: `/subscriptions/subscription/NNNNNNN/...` |
 | **Database ID** (numérico) | na URL do console: `/bdb-view/NNNNNNNN/configuration` |
-| **API keys** | menu superior → ícone de conta → *Access Management* → *API Keys* (precisa criar uma "User Key" e copiar a "Account Key" também) |
+| **API keys** (User Key + Account Key) | menu superior → ícone de conta → *Access Management* → *API Keys* (crie a "User Key" e copie a "Account Key" da mesma tela) |
+
+> 💡 **O endpoint interno do Prometheus é descoberto automaticamente** pela
+> UI no boot (campo `prometheusEndpoint` da subscription). Você pode deixar
+> `REDIS_CLOUD_INTERNAL_ENDPOINT=` vazio no `.env` — a stack acha sozinho.
 
 ### Validando conectividade antes de subir
 
@@ -80,7 +83,7 @@ cp .env.example .env
 $EDITOR .env
 ```
 
-Preencha **as 6 variáveis obrigatórias** com os dados que você anotou:
+Preencha **as 5 variáveis obrigatórias** com os dados que você anotou:
 
 ```bash
 # Endpoint privado do banco (host:porta)
@@ -89,9 +92,6 @@ REDIS_HOST_AND_PORT=silent-frog-lemon-72563.db.redis.io:19515
 # Senha do banco
 REDIS_PASSWORD=uxrwnX1mneuiDUdJUZQPCsOVN36bt5Jh
 
-# Endpoint interno SEM porta (Prometheus adiciona :8070 sozinho)
-REDIS_CLOUD_INTERNAL_ENDPOINT=internal.cXXXXX.region-mz.gcp.cloud.rlrcp.com
-
 # API keys (cuidado: vão pra dois headers diferentes)
 REDIS_CLOUD_API_KEY=<sua User Key>             # vai como x-api-secret-key
 REDIS_CLOUD_ACCOUNT_KEY=<sua Account Key>      # vai como x-api-key
@@ -99,6 +99,11 @@ REDIS_CLOUD_ACCOUNT_KEY=<sua Account Key>      # vai como x-api-key
 # IDs numéricos
 REDIS_CLOUD_SUBSCRIPTION_ID=3284776
 DEMO_DB_ID=14345819
+
+# Endpoint Prometheus interno — deixa VAZIO pra auto-discovery,
+# OU sobrescreva manualmente se quiser forçar um valor específico:
+# REDIS_CLOUD_INTERNAL_ENDPOINT=internal.cXXXXX.region-mz.gcp.cloud.rlrcp.com
+REDIS_CLOUD_INTERNAL_ENDPOINT=
 ```
 
 Ajuste também os **baselines** pra refletir o tamanho atual do seu banco:
@@ -260,10 +265,12 @@ Tudo configurável via `.env`:
 | `THROUGHPUT_THRESHOLD_FOR` | precisa sustentar acima por X | `30s` |
 | `MEMORY_THRESHOLD_PCT` | dispara quando memória > X% do limite | `80` |
 | `MEMORY_THRESHOLD_FOR` | precisa sustentar acima por X | `30s` |
-| `BURST_OPS` | alvo do scale UP de throughput | `50000` |
-| `THROUGHPUT_CEILING` | teto duro de throughput | `100000` |
-| `MEMORY_STEP_GB` | quanto a memória sobe por trigger | `2` |
-| `MEMORY_CEILING_GB` | teto duro de memória | `5` |
+| `BURST_OPS` | alvo do scale UP de throughput | `40000` |
+| `THROUGHPUT_CEILING` | teto duro de throughput (default = cobre pico BBB de 33k com folga) | `40000` |
+| `MEMORY_STEP_GB` | quanto a memória sobe por trigger (só se memory scaling ON) | `2` |
+| `MEMORY_CEILING_GB` | teto duro de memória (só se memory scaling ON) | `5` |
+| `MEMORY_SCALING_ENABLED` | habilita scale UP de memória (OFF por default) | `false` |
+| `UI_AUTH_PASSWORD` | Basic Auth na UI (vazio = sem auth) | `` (vazio) |
 | `AUTO_RESET_SECONDS` | tempo até o reset agendado pro baseline | `300` |
 
 Mudou algo? Aplique sem rebuild:

@@ -39,24 +39,27 @@ with API keys, and a database ID.
 git clone https://github.com/gacerioni/redis-cloud-autoscaler-ui.git
 cd redis-cloud-autoscaler-ui
 cp .env.example .env
-$EDITOR .env                   # fill in the 6 required fields
+$EDITOR .env                   # fill in the 5 required fields
 docker compose up -d
 open http://localhost:8000
 ```
 
-That's it. The UI boots, renders the Prometheus config, registers two scaling
-rules with the autoscaler, and starts streaming live state to your browser.
+That's it. The UI boots, validates the configuration, auto-discovers the
+Prometheus endpoint, registers the scaling rule with the autoscaler, and
+starts streaming live state to your browser.
 
-### Required `.env` fields (6)
+### Required `.env` fields (5)
 
 | Variable | Where to find it |
 |---|---|
 | `REDIS_HOST_AND_PORT` | Console → your database → *Configuration* → private endpoint |
 | `REDIS_PASSWORD` | Console → your database → *Security* |
-| `REDIS_CLOUD_INTERNAL_ENDPOINT` | **optional** — auto-discovered from the subscription's `prometheusEndpoint` field at boot |
-| `REDIS_CLOUD_API_KEY` | Console → *Access Management* → API Keys → User Key |
-| `REDIS_CLOUD_ACCOUNT_KEY` | same screen → Account Key |
+| `REDIS_CLOUD_API_KEY` + `REDIS_CLOUD_ACCOUNT_KEY` | Console → *Access Management* → API Keys (User Key + Account Key respectively) |
 | `REDIS_CLOUD_SUBSCRIPTION_ID` + `DEMO_DB_ID` | numeric IDs from the console URLs |
+
+> `REDIS_CLOUD_INTERNAL_ENDPOINT` is **auto-discovered** at boot from the
+> subscription's `prometheusEndpoint` — leave it empty unless you want to
+> override.
 
 Defaults for everything else (thresholds, baselines, ceilings) live in
 `.env.example` and ship with sensible values for a 2.5 GB / 25 k ops/sec
