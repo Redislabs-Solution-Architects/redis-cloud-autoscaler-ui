@@ -35,11 +35,31 @@ services:
       - sh
       - -ec
       - |
-        apk add --no-cache gettext > /dev/null
+        apk add --no-cache gettext curl jq > /dev/null
         export REDIS_CLOUD_AUTOSCALER_HOST=autoscaler
         export THROUGHPUT_THRESHOLD_OPS=$$(( $${BASELINE_OPS:-25000} * $${THROUGHPUT_THRESHOLD_PCT:-80} / 100 ))
         MEM_ENABLED=$$(echo "$${MEMORY_SCALING_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')
-        echo "rendering: THROUGHPUT_THRESHOLD_OPS=$$THROUGHPUT_THRESHOLD_OPS memory=$$MEM_ENABLED"
+
+        # Auto-discover the Prometheus scrape endpoint if the user didn't set it.
+        # Prometheus needs this hostname rendered into prometheus.yml BEFORE it
+        # starts — too early for the UI's Python-side discovery to help.
+        if [ -z "$${REDIS_CLOUD_INTERNAL_ENDPOINT}" ]; then
+          echo "REDIS_CLOUD_INTERNAL_ENDPOINT empty — auto-discovering from REST API..."
+          RAW=$$(curl -sS --max-time 10 \
+            -H "x-api-key: $${REDIS_CLOUD_ACCOUNT_KEY}" \
+            -H "x-api-secret-key: $${REDIS_CLOUD_API_KEY}" \
+            "$${REDIS_CLOUD_API_BASE:-https://api.redislabs.com/v1}/subscriptions/$${REDIS_CLOUD_SUBSCRIPTION_ID}" \
+            | jq -r ".prometheusEndpoint // empty")
+          # strip :PORT if present
+          export REDIS_CLOUD_INTERNAL_ENDPOINT=$${RAW%%:*}
+          if [ -z "$${REDIS_CLOUD_INTERNAL_ENDPOINT}" ]; then
+            echo "ERROR: could not auto-discover prometheusEndpoint — check REST API credentials"
+            exit 1
+          fi
+          echo "auto-discovered: $${REDIS_CLOUD_INTERNAL_ENDPOINT}"
+        fi
+
+        echo "rendering: endpoint=$${REDIS_CLOUD_INTERNAL_ENDPOINT} threshold=$$THROUGHPUT_THRESHOLD_OPS memory=$$MEM_ENABLED"
         envsubst < /templates/prometheus.template.yml > /shared/prometheus.yml
         envsubst < /templates/alert.rules.template    > /shared/alert.rules
         if [ "$$MEM_ENABLED" = "true" ] || [ "$$MEM_ENABLED" = "1" ] || [ "$$MEM_ENABLED" = "yes" ]; then
