@@ -127,8 +127,8 @@ MEMORY_CEILING_GB=5      # teto duro de memória
 E o **branding** (aparece no header da UI):
 
 ```bash
-DEMO_CLIENT_NAME=Globo
-DEMO_TAGLINE=Plataforma Jarvis — pico de tráfego de jogo
+DEMO_CLIENT_NAME=Acme
+DEMO_TAGLINE=Pico de tráfego de evento ao vivo
 ```
 
 ## Passo 3a · Habilitar Basic Auth (opcional, recomendado)
@@ -266,7 +266,7 @@ Tudo configurável via `.env`:
 | `MEMORY_THRESHOLD_PCT` | dispara quando memória > X% do limite | `80` |
 | `MEMORY_THRESHOLD_FOR` | precisa sustentar acima por X | `30s` |
 | `BURST_OPS` | alvo do scale UP de throughput | `40000` |
-| `THROUGHPUT_CEILING` | teto duro de throughput (default = cobre pico BBB de 33k com folga) | `40000` |
+| `THROUGHPUT_CEILING` | teto duro de throughput (default = cobre picos típicos de ~30k com folga) | `40000` |
 | `MEMORY_STEP_GB` | quanto a memória sobe por trigger (só se memory scaling ON) | `2` |
 | `MEMORY_CEILING_GB` | teto duro de memória (só se memory scaling ON) | `5` |
 | `MEMORY_SCALING_ENABLED` | habilita scale UP de memória (OFF por default) | `false` |
@@ -291,8 +291,8 @@ Quer expor a UI com domínio próprio e TLS automático? Use a overlay:
 2. Libere portas **80 e 443** no security group
 3. No `.env`:
    ```bash
-   DEMO_DOMAIN=autoscaler.minharede.globo.com
-   DEMO_EMAIL=devops@globo.com
+   DEMO_DOMAIN=autoscaler.minharede.example.com
+   DEMO_EMAIL=devops@example.com
    ```
 4. Suba com a overlay:
    ```bash

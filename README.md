@@ -191,7 +191,7 @@ These show up in the dashboard header.
 |---|---|
 | **HTTP Basic Auth** off (`UI_AUTH_PASSWORD=`) | open access for quick demos; set any non-empty value to enable. Browser prompts the first time; the WebSocket upgrade carries the same credentials. |
 | **Memory scaling** off (`MEMORY_SCALING_ENABLED=false`) | scaling memory has direct cost impact. The dashboard still shows live memory usage as context, but no `IncreaseMemory` alert/rule is created. |
-| **Throughput cap** at `40 000 ops/sec` | covers real-world customer peaks (e.g. BBB ~33 k) with headroom and prevents runaway scale. |
+| **Throughput cap** at `40 000 ops/sec` | covers typical event-driven peaks (live sports / live streaming / voting events around 30 k ops/sec) with headroom, while preventing runaway scale. |
 | **Internal ports** unpublished | only `:8000` (UI) is on the host. Prometheus/Alertmanager/Autoscaler are reachable only from inside the compose network. |
 | **Reactive scale-down** disabled by design | yo-yo migrations destabilize clusters in production. The UI runs a one-shot timer per scale-up event and calls the REST API directly — independently of the autoscaler. |
 
