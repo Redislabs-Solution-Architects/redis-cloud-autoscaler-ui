@@ -5,7 +5,7 @@
 **A plug-and-play orchestration + dashboard layer around the official Redis Cloud Autoscaler.**
 One `docker compose up -d` away from watching your Redis Cloud Pro database elastically scale, end to end.
 
-[![License](https://img.shields.io/github/license/gacerioni/redis-cloud-autoscaler-ui?color=blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gacerioni/redis-cloud-autoscaler-ui)](https://hub.docker.com/r/gacerioni/redis-cloud-autoscaler-ui)
 [![Image Size](https://img.shields.io/docker/image-size/gacerioni/redis-cloud-autoscaler-ui/latest)](https://hub.docker.com/r/gacerioni/redis-cloud-autoscaler-ui/tags)
 [![Multi-arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-informational)](https://hub.docker.com/r/gacerioni/redis-cloud-autoscaler-ui/tags)
