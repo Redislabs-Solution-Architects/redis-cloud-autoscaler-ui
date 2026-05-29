@@ -132,7 +132,7 @@ flowchart LR
 | `autoscaler` | `ghcr.io/redis-field-engineering/redis-cloud-autoscaler` | long-running | the unchanged upstream service |
 | `prometheus` | `prom/prometheus` | long-running | scrapes `bdb_*` metrics from the DB's `:8070` endpoint |
 | `alertmanager` | `prom/alertmanager` | long-running | routes `IncreaseThroughput` (and optionally `IncreaseMemory`) webhooks |
-| `ui` | `Redislabs-Solution-Architects/redis-cloud-autoscaler-ui` | long-running | this repo — FastAPI + Chart.js dashboard, load generator, admin actions |
+| `ui` | `gacerioni/redis-cloud-autoscaler-ui` | long-running | this repo — FastAPI + Chart.js dashboard, load generator, admin actions |
 
 **Only the UI (`:8000`) is published to the host by default.** Prometheus / Alertmanager / Autoscaler stay on the internal compose network. To inspect them directly, opt-in:
 
