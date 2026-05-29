@@ -31,11 +31,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #  - libevent (+ openssl) / zlib / pcre → memtier_benchmark needs these at runtime
 #  - redis-tools                        → safe FLUSHDB + DBSIZE
 #  - curl / jq                          → REST API calls + diagnostics
-#  - docker.io (CLI only)               → docker logs autoscaler (sock mounted ro)
+#
+# NOTE: No `docker` CLI here on purpose. We used to ship docker.io (~120MB)
+# just to tail the autoscaler container logs, but Debian's package
+# negotiates Docker API v1.41 — which gets rejected by hosts running
+# Docker daemons that require ≥v1.44 (Ubuntu 24.04, modern installs).
+# The UI now talks to /var/run/docker.sock directly via stdlib HTTP, so
+# the image stays slim AND works against any host daemon version.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libevent-2.1-7 libevent-openssl-2.1-7 libssl3 zlib1g libpcre3 \
         redis-tools curl jq ca-certificates \
-        docker.io \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
 
 COPY --from=memtier-builder /src/memtier_benchmark /usr/local/bin/memtier_benchmark

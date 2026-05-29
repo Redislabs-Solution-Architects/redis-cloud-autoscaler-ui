@@ -7,8 +7,10 @@ is brought back to baseline — there is no reactive scale-down).
 """
 from __future__ import annotations
 import asyncio
+import http.client
 import json
 import logging
+import socket
 import subprocess
 import time
 from collections import deque
@@ -21,6 +23,75 @@ logger = logging.getLogger("state")
 
 # 5 minutes of history at 1 Hz
 HISTORY_SECONDS = 300
+
+# Docker daemon Unix socket — mounted read-only into the UI container.
+_DOCKER_SOCK = "/var/run/docker.sock"
+
+
+class _UnixSocketHTTPConnection(http.client.HTTPConnection):
+    """http.client connection that speaks HTTP over a Unix socket.
+
+    The Docker daemon's REST API is served on /var/run/docker.sock and
+    accepts the same HTTP semantics as a TCP daemon. Using stdlib means
+    no docker CLI binary inside the image and no API-version skew with
+    the host daemon.
+    """
+    def __init__(self, path: str, timeout: float = 4):
+        super().__init__("localhost", timeout=timeout)
+        self._sock_path = path
+
+    def connect(self) -> None:  # type: ignore[override]
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._sock_path)
+
+
+def _demux_docker_stream(data: bytes) -> str:
+    """Strip the 8-byte stream header Docker prepends to each log chunk
+    when the container has no TTY. Header is:
+        [stream_type (1B)] [padding (3B)] [size (4B big-endian)]
+    followed by `size` bytes of payload.
+    If parsing fails (TTY mode or unexpected format) we fall back to
+    decoding the raw bytes — the regex matchers downstream will still
+    find what they need.
+    """
+    out: list[bytes] = []
+    i = 0
+    n = len(data)
+    try:
+        while i + 8 <= n:
+            size = int.from_bytes(data[i + 4:i + 8], "big")
+            i += 8
+            out.append(data[i:i + size])
+            i += size
+        # Some leftover (truncated frame at end) — append as-is.
+        if i < n:
+            out.append(data[i:])
+        return b"".join(out).decode("utf-8", errors="replace")
+    except Exception:
+        return data.decode("utf-8", errors="replace")
+
+
+def _docker_logs_via_socket(container: str, *, tail: int = 200,
+                            timeout: float = 4) -> str | None:
+    """Return last `tail` lines of stdout+stderr from `container`, or None
+    if the socket is unreachable. Raises nothing — all errors swallow into
+    None so the caller can decide how to surface them."""
+    try:
+        conn = _UnixSocketHTTPConnection(_DOCKER_SOCK, timeout=timeout)
+        path = (f"/containers/{container}/logs"
+                f"?stdout=1&stderr=1&tail={tail}&timestamps=0")
+        conn.request("GET", path, headers={"Host": "docker"})
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        if resp.status != 200:
+            return None
+        return _demux_docker_stream(body)
+    except (FileNotFoundError, ConnectionRefusedError, OSError, socket.timeout):
+        return None
+    except Exception:
+        return None
 
 
 class StateManager:
@@ -219,17 +290,28 @@ class StateManager:
                        "Alert silenced successfully", "Received alert")
 
     def fetch_events(self) -> None:
-        """Tail the autoscaler container logs. Requires docker.sock mounted (ro)."""
-        try:
-            r = subprocess.run(
-                ["docker", "logs", "--tail", "200", "autoscaler"],
-                capture_output=True, text=True, timeout=4,
-            )
-            raw = r.stdout + r.stderr
-        except FileNotFoundError:
-            # docker CLI not installed — skip silently
-            return
-        except Exception:
+        """Tail the autoscaler container logs via the Docker socket.
+
+        We hit /var/run/docker.sock directly with stdlib HTTP — no
+        `docker` CLI inside the image. Two reasons:
+
+        1. The Debian `docker.io` package ships a CLI that negotiates
+           API v1.41, which gets rejected by daemons that require
+           v1.44+ (Ubuntu 24.04 / fresh Docker installs). The container
+           card silently stayed empty until we noticed.
+        2. Skipping the CLI binary saves ~120 MB from the runtime image.
+
+        Requires the socket mounted read-only (already the case).
+        """
+        raw = _docker_logs_via_socket("autoscaler", tail=200, timeout=4)
+        if raw is None:
+            # Couldn't reach the socket at all — surface it so users debug.
+            with self._lock:
+                self.events = deque(
+                    [{"ts": "", "kind": "error",
+                      "msg": "Cannot read autoscaler logs (docker.sock unreachable)"}],
+                    maxlen=50,
+                )
             return
 
         parsed: list[dict[str, str]] = []
