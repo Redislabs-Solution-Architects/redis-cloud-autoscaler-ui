@@ -33,6 +33,10 @@ class StateManager:
         self.db_memlim_gb: float = 0.0
         self.db_modified: str = ""
         self.db_shards: int = 0
+        # HA flag taken directly from the REST API — NOT inferred from the
+        # memlim/baseline ratio (that heuristic breaks the moment we reset
+        # to baseline, since memlim then equals BASELINE_MEM_GB).
+        self.db_replication: bool = False
         # Live (Prometheus)
         self.live_ops: float = 0.0
         self.live_mem_bytes: float = 0.0
@@ -72,8 +76,7 @@ class StateManager:
                     "burst_ops":        config.BURST_OPS,
                     "baseline_mem_gb":  config.BASELINE_MEM_GB,
                     "burst_mem_gb":     config.MEMORY_CEILING_GB,
-                    # Heuristic: HA is on when memlim is ~2× baseline.
-                    "replication":      self.db_memlim_gb >= 1.9 * config.BASELINE_MEM_GB,
+                    "replication":      self.db_replication,
                 },
                 "live": {
                     "ops_per_sec":   self.live_ops,
@@ -149,6 +152,7 @@ class StateManager:
                         self.db_name        = db.get("name") or ""
                         self.db_throughput  = int(db["throughputMeasurement"]["value"])
                         self.db_memlim_gb   = float(db["memoryLimitInGb"])
+                        self.db_replication = bool(db.get("replication", False))
                         self.db_modified    = db.get("lastModified") or ""
                         self.db_fetch_err   = ""
                     return
@@ -307,12 +311,15 @@ class StateManager:
         replication is enabled (because HA needs master + replica memory).
         The customer-facing "dataset size" in the console is half of that.
         We compare baselines against dataset size, not raw memory limit.
+
+        We rely on the `replication` boolean returned by the REST API — not
+        on a memlim/baseline ratio heuristic. The heuristic mis-detected HA
+        after a reset (memlim == BASELINE_MEM_GB looked like "no HA" even
+        when replication was still true).
         """
         if self.db_memlim_gb <= 0:
             return 0.0
-        # When db_memlim_gb ≈ 2 × BASELINE_MEM_GB we assume HA is doubling it.
-        # When it equals BASELINE_MEM_GB we assume no HA.
-        return self.db_memlim_gb / 2 if self.db_memlim_gb >= 1.9 * config.BASELINE_MEM_GB else self.db_memlim_gb
+        return self.db_memlim_gb / 2 if self.db_replication else self.db_memlim_gb
 
     def _is_scaled_above_baseline(self) -> bool:
         return (self.db_throughput > config.BASELINE_OPS or

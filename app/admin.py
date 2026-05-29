@@ -68,15 +68,67 @@ def flushdb() -> dict[str, Any]:
     return {"ok": True, "message": "Flushed customer keys"}
 
 
+def _is_ha_enabled() -> bool:
+    """Ask the REST API whether `replication` is on for this DB.
+
+    Returns False on any error — safer than guessing True (we'd then send
+    2× the dataset and grow the DB on a reset; sending 1× when HA is
+    actually on just shrinks it, which the caller will notice).
+    """
+    url = (f"{config.REDIS_CLOUD_API_BASE}/subscriptions/"
+           f"{config.REDIS_CLOUD_SUBSCRIPTION_ID}/databases/{config.DB_ID}")
+    ok, out, _ = _run([
+        "curl", "-sS", "--max-time", "8",
+        "-H", f"x-api-key: {config.REDIS_CLOUD_ACCOUNT_KEY}",
+        "-H", f"x-api-secret-key: {config.REDIS_CLOUD_API_KEY}",
+        url,
+    ], timeout=10)
+    if not ok:
+        logger.warning("could not fetch DB to determine HA: assuming False")
+        return False
+    try:
+        return bool(json.loads(out).get("replication", False))
+    except Exception:
+        logger.warning("malformed DB response when checking HA: assuming False")
+        return False
+
+
 def reset_to_baseline() -> dict[str, Any]:
-    """PUT the DB back to baseline (throughput + memory) via the REST API."""
-    payload = {
-        "memoryLimitInGb": float(config.BASELINE_MEM_GB),
+    """PUT the DB back to baseline via the REST API.
+
+    Two design rules baked in:
+
+    1. **Throughput is always reset** — that's the whole point of the demo.
+    2. **Memory is ONLY touched when `MEMORY_SCALING_ENABLED=true`.** If the
+       operator opted out of memory scaling, the autoscaler never grew the
+       memlim in the first place, so this reset must not shrink it either.
+       Toggling memory limits as a side-effect of a throughput reset would
+       be a footgun (and is what got us here in the first place — see the
+       2.5 GB-instead-of-5 GB regression on 2026-05-29).
+
+    When memory IS reset, we must honor HA: Redis Cloud's REST API expects
+    `memoryLimitInGb` as the *physical* size (master + replica when HA is
+    on), which is 2 × the dataset size shown in the console. The
+    `replication` boolean from the API is the source of truth — never
+    inferred from memlim/baseline ratios.
+    """
+    payload: dict[str, Any] = {
         "throughputMeasurement": {
             "by": "operations-per-second",
             "value": config.BASELINE_OPS,
         },
     }
+    mem_note = ""
+    if config.MEMORY_SCALING_ENABLED:
+        # Pull the live `replication` flag from the REST API directly. We
+        # could read it off the in-process state singleton, but that'd
+        # introduce a circular import — and the cost of one extra GET is
+        # noise compared to the PUT we're about to make.
+        ha = _is_ha_enabled()
+        phys_gb = float(config.BASELINE_MEM_GB) * (2 if ha else 1)
+        payload["memoryLimitInGb"] = phys_gb
+        mem_note = (f" · {config.BASELINE_MEM_GB} GB dataset"
+                    f" ({phys_gb} GB physical{' with HA' if ha else ''})")
     url = (f"{config.REDIS_CLOUD_API_BASE}/subscriptions/"
            f"{config.REDIS_CLOUD_SUBSCRIPTION_ID}/databases/{config.DB_ID}")
     ok, out, err = _run([
@@ -89,8 +141,7 @@ def reset_to_baseline() -> dict[str, Any]:
     ], timeout=15)
     if not ok:
         return {"ok": False, "message": (err or out)[:300]}
-    msg = (f"Scale request submitted (back to {config.BASELINE_OPS:,} ops/sec · "
-           f"{config.BASELINE_MEM_GB} GB)")
+    msg = f"Scale request submitted (back to {config.BASELINE_OPS:,} ops/sec{mem_note})"
     try:
         data = json.loads(out)
         tid = data.get("taskId") or ""
