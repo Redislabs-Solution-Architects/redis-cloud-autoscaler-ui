@@ -106,7 +106,7 @@ PRESETS: list[dict[str, Any]] = [
     {
         "id": "warmup",
         "name": "Baseline traffic",
-        "description": "Quiet read-heavy cache pattern — well below any threshold",
+        "description": "Lightest preset — read-heavy cache pattern (may still cross thresholds on small databases)",
         "params": {"threads": 2, "clients": 25, "pipeline": 5,
                    "ratio": "1:10", "data_size": 256,
                    "key_minimum": 1, "key_maximum": 500_000,

@@ -243,9 +243,11 @@ Você deve ver, em ~15 segundos:
 ```
 bootstrap: registering scaling rules
 registered IncreaseThroughput
-registered IncreaseMemory
 UI ready
 ```
+
+> Só **uma** regra é registrada por default. `registered IncreaseMemory` só
+> aparece se você setou `MEMORY_SCALING_ENABLED=true` no `.env` (Passo 3b).
 
 Se aparecer **"autoscaler unreachable"**, espere mais 30 segundos —
 o autoscaler Java demora ~15s pra subir. Se passar de 1 minuto:
@@ -294,10 +296,19 @@ depois `docker compose restart ui`.
 
 Na UI, role até o card **Load generator**. Escolha um preset:
 
-- **Baseline traffic** — não dispara nada (apenas tráfego baixo)
+- **Baseline traffic** — o mais leve dos quatro
 - **Sustained burst** — dispara scale UP de throughput em ~40s
 - **Dual scale** — dispara throughput E memory (com `key-pattern=R:R` e values de 1KB)
 - **Memory fill** — só memory (writes puros)
+
+> ⚠️ **A intensidade dos presets é absoluta** (threads × clients × pipeline),
+> não relativa ao tamanho do banco. Eles foram calibrados pra um banco de
+> ~25k ops/sec. Em bancos pequenos (≤ 5k ops/sec), **até o "Baseline
+> traffic" cruza o threshold e dispara o scale-up** — não é bug, é a rede
+> privada entregando mais vazão do que o limite configurado do banco. Se
+> quiser tráfego que NÃO escala num banco pequeno, reduza `clients` e
+> `pipeline` manualmente no formulário (ex.: 1 thread, 2 clients,
+> pipeline 1).
 
 Clique **Start load**. Aguarde:
 - ~10s: `ramping up…` no painel "Live metrics"
