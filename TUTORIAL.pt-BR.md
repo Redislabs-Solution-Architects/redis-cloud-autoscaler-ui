@@ -152,6 +152,14 @@ MEMORY_CEILING_GB=5      # teto duro de memória
 > alocada pra master + réplica. A UI mostra ambos os valores como
 > `Dataset: 2.5 GB · with HA: 5 GB physical` automaticamente.
 
+> 💰 **`BURST_OPS` e `THROUGHPUT_CEILING` têm impacto direto de custo**: são
+> o patamar pro qual o banco PULA quando o threshold dispara, e o teto que o
+> autoscaler nunca ultrapassa. Os valores do `.env.example` descrevem o
+> ambiente de demo — **dimensione pros SEUS números antes da primeira
+> execução**. Se `BASELINE_OPS` não bater com o throughput real configurado
+> no console, o threshold dispara no nível errado (a UI avisa no boot
+> quando detecta a divergência).
+
 E o **branding** (aparece no header da UI):
 
 ```bash
@@ -187,6 +195,26 @@ Se quiser habilitar (com cuidado):
 ```bash
 MEMORY_SCALING_ENABLED=true
 ```
+
+## Passo 3c · Build interno / registry próprio (Artifactory, ECR, GAR…)
+
+Se a política da empresa exige buildar a imagem no pipeline interno (em vez
+de puxar do Docker Hub):
+
+```bash
+# 1. build a partir do código deste repo (autocontido — o memtier_benchmark
+#    é compilado de uma release fixa DURANTE o build, nada é baixado dos
+#    autores em runtime)
+docker build -t registry.suaempresa.com/redis-cloud-autoscaler-ui:1.0 .
+docker push registry.suaempresa.com/redis-cloud-autoscaler-ui:1.0
+
+# 2. aponte a stack pra ela — no .env:
+UI_IMAGE=registry.suaempresa.com/redis-cloud-autoscaler-ui:1.0
+```
+
+As outras 4 imagens (Prometheus, Alertmanager, autoscaler upstream e Alpine)
+podem ser espelhadas no registry interno e sobrescritas do mesmo jeito —
+cada uma aparece uma única vez no `docker-compose.yml`.
 
 ## Passo 4 · Subir a stack
 

@@ -90,7 +90,46 @@ That's it. The stack:
 | `REDIS_CLOUD_API_KEY` + `REDIS_CLOUD_ACCOUNT_KEY` | Console → *Access Management* → API Keys *(User Key + Account Key respectively)* |
 | `REDIS_CLOUD_SUBSCRIPTION_ID` + `DEMO_DB_ID` | numeric IDs from the console URLs |
 
-Everything else (thresholds, baselines, cap, branding, scale-down window, auth) ships with sensible defaults — see [`.env.example`](.env.example).
+Everything else (thresholds, branding, scale-down window, auth) ships with sensible defaults — see [`.env.example`](.env.example).
+
+### Running against YOUR Redis Cloud account
+
+The stack is account-agnostic — the five fields above come from *your*
+console, whatever the account, subscription, or database. But four more
+values **must be sized to your database**, because the defaults describe a
+demo environment, not yours:
+
+```bash
+BASELINE_OPS=25000        # ← the throughput YOUR DB is configured for today
+BASELINE_MEM_GB=2.5       # ← YOUR dataset size as shown in the console
+BURST_OPS=40000           # ← the throughput a scale-up jumps to (cost impact!)
+THROUGHPUT_CEILING=40000  # ← hard cap — the autoscaler never goes beyond this
+```
+
+Get `BASELINE_OPS` wrong and the alert threshold fires at the wrong level
+(the UI warns at boot when it detects the mismatch). `BURST_OPS` and
+`THROUGHPUT_CEILING` are *what you are willing to pay for* when a spike
+hits — size them deliberately before the first run.
+
+### Building from source / private registries (Artifactory, ECR, GAR, …)
+
+If your pipeline must build images internally instead of pulling from
+Docker Hub:
+
+```bash
+docker build -t registry.your-company.com/redis-cloud-autoscaler-ui:1.0 .
+docker push registry.your-company.com/redis-cloud-autoscaler-ui:1.0
+
+# then point the stack at it — in .env:
+UI_IMAGE=registry.your-company.com/redis-cloud-autoscaler-ui:1.0
+```
+
+The build is fully self-contained: `memtier_benchmark` is compiled from a
+pinned upstream release *during* the build, and nothing is fetched from
+this repo's authors at runtime. The other four images (Prometheus,
+Alertmanager, the upstream autoscaler, Alpine) can be mirrored into your
+registry and overridden the same way if needed — they are referenced once
+each in [`docker-compose.yml`](docker-compose.yml).
 
 > 🇧🇷 **Tutorial em português** com passo a passo, screenshots e troubleshooting: [`TUTORIAL.pt-BR.md`](TUTORIAL.pt-BR.md)
 
