@@ -37,15 +37,23 @@ services:
       - |
         apk add --no-cache gettext curl jq > /dev/null
         export REDIS_CLOUD_AUTOSCALER_HOST=autoscaler
+        export REDIS_CLOUD_METRICS_PORT=$${REDIS_CLOUD_METRICS_PORT:-8070}
         export THROUGHPUT_THRESHOLD_OPS=$$(( $${BASELINE_OPS:-25000} * $${THROUGHPUT_THRESHOLD_PCT:-80} / 100 ))
         MEM_ENABLED=$$(echo "$${MEMORY_SCALING_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')
+
+        # DB id: REDIS_CLOUD_DATABASE_ID is the preferred name; DEMO_DB_ID is
+        # a backward-compatible alias. The UI container reads the same pair.
+        DB_ID_EFFECTIVE=$${REDIS_CLOUD_DATABASE_ID:-$${DEMO_DB_ID}}
+        if [ -z "$$DB_ID_EFFECTIVE" ]; then
+          echo "ERROR: set REDIS_CLOUD_DATABASE_ID (numeric database id) in .env"; exit 1
+        fi
 
         # --- Validate REST API credentials shape ---------------------------
         # Catches the most common .env editing mistakes BEFORE any HTTP call:
         # 1) Inline comments that leaked into the value
         # 2) Quote marks left around the value
         # 3) Suspicious lengths (Redis Cloud keys are typically ~50 chars)
-        for VAR in REDIS_CLOUD_ACCOUNT_KEY REDIS_CLOUD_API_KEY REDIS_CLOUD_SUBSCRIPTION_ID DEMO_DB_ID; do
+        for VAR in REDIS_CLOUD_ACCOUNT_KEY REDIS_CLOUD_API_KEY REDIS_CLOUD_SUBSCRIPTION_ID; do
           VAL=$$(eval "echo \$$$$VAR")
           if [ -z "$$VAL" ]; then
             echo "ERROR: $$VAR is empty in .env"; exit 1
@@ -100,12 +108,12 @@ services:
           echo "auto-discovered prometheusEndpoint: $${REDIS_CLOUD_INTERNAL_ENDPOINT}"
         fi
 
-        echo "rendering: endpoint=$${REDIS_CLOUD_INTERNAL_ENDPOINT} threshold=$$THROUGHPUT_THRESHOLD_OPS memory=$$MEM_ENABLED"
+        echo "rendering: endpoint=$${REDIS_CLOUD_INTERNAL_ENDPOINT}:$${REDIS_CLOUD_METRICS_PORT} threshold=$$THROUGHPUT_THRESHOLD_OPS memory=$$MEM_ENABLED"
         # IMPORTANT: pass explicit var list to envsubst. Without it, envsubst
         # would also expand Prometheus' own `$$labels.foo` syntax in the alert
         # rules templates, mangling them to `.foo` and breaking template
         # evaluation at alert time. We only want to substitute OUR variables.
-        SUBST_VARS='$${REDIS_CLOUD_INTERNAL_ENDPOINT} $${REDIS_CLOUD_AUTOSCALER_HOST} $${THROUGHPUT_THRESHOLD_OPS} $${THROUGHPUT_THRESHOLD_FOR} $${MEMORY_THRESHOLD_PCT} $${MEMORY_THRESHOLD_FOR}'
+        SUBST_VARS='$${REDIS_CLOUD_INTERNAL_ENDPOINT} $${REDIS_CLOUD_METRICS_PORT} $${REDIS_CLOUD_AUTOSCALER_HOST} $${THROUGHPUT_THRESHOLD_OPS} $${THROUGHPUT_THRESHOLD_FOR} $${MEMORY_THRESHOLD_PCT} $${MEMORY_THRESHOLD_FOR}'
         envsubst "$$SUBST_VARS" < /templates/prometheus.template.yml > /shared/prometheus.yml
         envsubst "$$SUBST_VARS" < /templates/alert.rules.template    > /shared/alert.rules
         if [ "$$MEM_ENABLED" = "true" ] || [ "$$MEM_ENABLED" = "1" ] || [ "$$MEM_ENABLED" = "yes" ]; then

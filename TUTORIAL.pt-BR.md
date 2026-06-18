@@ -64,9 +64,9 @@ vim .env
 | `REDIS_HOST_AND_PORT` | console → banco → *Configuration* → private endpoint (host:porta) |
 | `REDIS_PASSWORD` | console → banco → *Security* → default user password |
 | `REDIS_CLOUD_ACCOUNT_KEY` | console → *Access Management* → API Keys → **Account key** (pública) |
-| `REDIS_CLOUD_API_KEY` | mesma tela → **User key** (secreta) |
+| `REDIS_CLOUD_API_KEY` | mesma tela → **User key** (secreta) — o dono precisa do role **Owner** (veja abaixo) |
 | `REDIS_CLOUD_SUBSCRIPTION_ID` | número na URL do console |
-| `DEMO_DB_ID` | número na URL do console |
+| `REDIS_CLOUD_DATABASE_ID` | número na URL do console (nome antigo `DEMO_DB_ID` ainda funciona) |
 
 **Dimensionamento (4 campos) — ajuste pro SEU banco:**
 
@@ -77,8 +77,11 @@ vim .env
 | `BURST_OPS` | pra onde o scale-up pula. **Isso é custo** — escolha conscientemente |
 | `THROUGHPUT_CEILING` | teto duro; o autoscaler nunca passa disso |
 
+É só isso. Você **não** preenche endpoint de métricas nem porta — a stack descobre sozinha via REST API (mesmas credenciais). Tudo no TIER 1 do `.env.example`; o resto tem default.
+
 Regras de edição: comentários só em linha própria, valores sem aspas, arquivo com LF.
-`REDIS_CLOUD_INTERNAL_ENDPOINT` pode ficar vazio — a stack descobre sozinha via REST API.
+
+> **Permissão da API**: o autoscaler escala o banco via REST API, então a **User key** precisa pertencer a um usuário com role **Owner**. Viewer/Logs Viewer são read-only; Manager/Member nem conseguem ter API key. Sem isso, a escala falha com **HTTP 403**. Habilite a API em *Access Management → API Keys → Enable API* (ação de Owner).
 
 ## 4 · Subir
 
@@ -126,14 +129,18 @@ O que esperar:
 
 Scale-down é **agendado, não reativo** — por design. Reativo causa yo-yo de shards em produção. A memória nunca é tocada no reset (a menos que você tenha ligado memory scaling).
 
+> **Evento real (segurar a capacidade)?** Set `AUTO_RESET_ENABLED=false` no `.env`. O banco escala e **fica** escalado — sem scale-down automático — até você clicar **Reset now**. Não precisa fingir uma janela gigante.
+
 ## Troubleshooting
 
 | Sintoma | Causa | Fix |
 |---|---|---|
 | `prometheus`/`alertmanager` saem com `exit code 5` | Compose v1 | instale o v2 (pré-requisitos) → `docker compose down -v && docker compose up -d` |
-| `autoscaler-init` sai com exit 5 | config inválida | `docker logs autoscaler-init` — a mensagem diz exatamente o que corrigir (keys trocadas = HTTP 500; key com lixo; sub não é Pro) |
+| `autoscaler-init` falha (exit ≠ 0) | config inválida | `docker logs autoscaler-init` — a mensagem diz exatamente o que corrigir (keys trocadas = HTTP 500; key com lixo; sub não é Pro) |
+| Escala falha com **HTTP 403** (ou *Reset now* fala em "lacks permission") | User key sem role Owner | crie a User key com role **Owner** (Viewer/Logs Viewer não escalam) |
 | UI fica em `connecting…` | erro no boot | `docker compose logs ui --tail 50` |
-| Alertas ficam `unknown` | Prometheus não alcança o `:8070` | volte ao passo 2 |
+| Alertas ficam `unknown` | Prometheus não alcança a porta de métricas | volte ao passo 2 |
+| Banco escala mas não volta ao baseline | `AUTO_RESET_ENABLED=false` (suspenso) | use **Reset now**, ou volte pra `true` e recrie o container da UI |
 | Quero recomeçar do zero | — | `docker compose down -v && docker compose up -d` |
 | Banco encheu de chave de teste | — | UI → Admin → **Flush database** (preserva os metadados do autoscaler) |
 

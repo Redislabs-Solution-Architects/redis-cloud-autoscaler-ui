@@ -336,9 +336,31 @@
     }
 
     // Decide on REAL state, not on stale last_action.
+    // Compare against the HA-normalized dataset size (memory_limit_gb is the
+    // raw API value, doubled when replication is on) so this matches the
+    // backend's _is_scaled_above_baseline — otherwise an HA DB at true
+    // baseline looks "scaled" because 5 GB physical > 2.5 GB dataset.
+    const datasetGb = (db && db.dataset_size_gb) || (db && db.memory_limit_gb);
     const atBaseline =
       db && db.throughput <= db.baseline_ops &&
-      db.memory_limit_gb <= (db.baseline_mem_gb + 0.01);
+      datasetGb <= (db.baseline_mem_gb + 0.01);
+
+    // Scheduled scale-down suspended (AUTO_RESET_ENABLED=false): the DB holds
+    // its scaled capacity until someone resets it manually.
+    if (r && r.enabled === false) {
+      card.classList.remove('active');
+      cd.textContent = '—';
+      prog.style.width = '0%';
+      btnCancel.disabled = true;
+      if (atBaseline) {
+        status.innerHTML = '<span style="color: var(--c-emerald)">✓ at baseline</span> <span class="dim">· auto scale-down suspended</span>';
+        btnNow.disabled = true;
+      } else {
+        status.innerHTML = '<span style="color: var(--c-amber)">scaled · auto scale-down suspended</span> <span class="dim">— use Reset now to return to baseline</span>';
+        btnNow.disabled = false;
+      }
+      return;
+    }
 
     if (r && r.scheduled && r.seconds_remaining !== null && r.seconds_remaining > 0) {
       // Active countdown — auto-reset is armed

@@ -131,8 +131,11 @@ def reset_to_baseline() -> dict[str, Any]:
                     f" ({phys_gb} GB physical{' with HA' if ha else ''})")
     url = (f"{config.REDIS_CLOUD_API_BASE}/subscriptions/"
            f"{config.REDIS_CLOUD_SUBSCRIPTION_ID}/databases/{config.DB_ID}")
+    # Capture the HTTP status: a 401/403 still completes the curl process
+    # (returncode 0), so without -w we'd report a permission error as success.
     ok, out, err = _run([
         "curl", "-sS", "--max-time", "12", "-X", "PUT",
+        "-w", "\n%{http_code}",
         "-H", f"x-api-key: {config.REDIS_CLOUD_ACCOUNT_KEY}",
         "-H", f"x-api-secret-key: {config.REDIS_CLOUD_API_KEY}",
         "-H", "Content-Type: application/json",
@@ -141,15 +144,37 @@ def reset_to_baseline() -> dict[str, Any]:
     ], timeout=15)
     if not ok:
         return {"ok": False, "message": (err or out)[:300]}
+
+    body, _, code = out.rpartition("\n")
+    code = code.strip()
+    if code not in ("200", "201", "202"):
+        hint = _api_error_hint(code)
+        return {"ok": False,
+                "message": f"REST API returned HTTP {code}{hint} · {body[:200]}"}
+
     msg = f"Scale request submitted (back to {config.BASELINE_OPS:,} ops/sec{mem_note})"
     try:
-        data = json.loads(out)
+        data = json.loads(body)
         tid = data.get("taskId") or ""
         if tid:
             msg += f" · task {str(tid)[:8]}"
     except Exception:
         pass
     return {"ok": True, "message": msg}
+
+
+def _api_error_hint(code: str) -> str:
+    """Human-readable hint for the common REST API failure codes when scaling."""
+    if code == "403":
+        return (" — the API key's user lacks permission to modify databases. "
+                "Its role must be Owner (Viewer/Logs Viewer are read-only)")
+    if code == "401":
+        return " — keys rejected (wrong/revoked, or account + user keys swapped)"
+    if code == "404":
+        return " — subscription or database id not found"
+    if code == "412":
+        return " — precondition failed (DB busy with another change? retry shortly)"
+    return ""
 
 
 def reload_scaling_rules() -> dict[str, Any]:

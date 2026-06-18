@@ -38,6 +38,25 @@ def _float(key: str, default: float) -> float:
         return default
 
 
+def _bool(key: str, default: bool) -> bool:
+    raw = os.environ.get(key)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+def _first(*keys: str, required: bool = False) -> str:
+    """First non-empty value among several env vars (for backward-compat
+    aliases). Earlier keys win — list the preferred name first."""
+    for k in keys:
+        v = os.environ.get(k, "")
+        if v:
+            return v
+    if required:
+        raise RuntimeError(f"Missing required env var: one of {', '.join(keys)}")
+    return ""
+
+
 # --------------------------------------------------------------------------- DB under management
 REDIS_HOST_AND_PORT = _str("REDIS_HOST_AND_PORT", required=True)
 REDIS_PASSWORD      = _str("REDIS_PASSWORD",      required=True)
@@ -48,16 +67,19 @@ REDIS_CLOUD_API_BASE        = _str("REDIS_CLOUD_API_BASE", "https://api.redislab
 REDIS_CLOUD_API_KEY         = _str("REDIS_CLOUD_API_KEY",         required=True)  # → x-api-secret-key
 REDIS_CLOUD_ACCOUNT_KEY     = _str("REDIS_CLOUD_ACCOUNT_KEY",     required=True)  # → x-api-key
 REDIS_CLOUD_SUBSCRIPTION_ID = _str("REDIS_CLOUD_SUBSCRIPTION_ID", required=True)
-DB_ID                       = int(_str("DEMO_DB_ID",              required=True))
+# Preferred name is REDIS_CLOUD_DATABASE_ID; DEMO_DB_ID kept as a backward-
+# compatible alias so existing .env files keep working.
+DB_ID                       = int(_first("REDIS_CLOUD_DATABASE_ID", "DEMO_DB_ID", required=True))
 
 # --------------------------------------------------------------------------- Prometheus metrics endpoint
 # Hostname-only (no port) of the *internal* Redis Cloud cluster endpoint.
-# Prometheus appends :8070 — Redis Cloud Pro exposes native metrics there.
-#
-# This is the value returned by the REST API in the subscription's
-# `prometheusEndpoint` field (stripped of the :8070 port). If left empty,
-# bootstrap will fetch it automatically.
+# Auto-discovered at boot from the subscription's `prometheusEndpoint` field —
+# the customer normally leaves this EMPTY. Only set it to override discovery
+# (e.g. a PSC/peering hostname that differs from what the API returns).
 REDIS_CLOUD_INTERNAL_ENDPOINT = _str("REDIS_CLOUD_INTERNAL_ENDPOINT", "")
+# Port where Redis Cloud Pro exposes native Prometheus metrics. Default 8070;
+# override only if a scenario uses a non-standard port.
+REDIS_CLOUD_METRICS_PORT      = _str("REDIS_CLOUD_METRICS_PORT", "8070")
 
 # --------------------------------------------------------------------------- Branding (per-customer)
 CLIENT_NAME    = _str("DEMO_CLIENT_NAME", "Demo")
@@ -72,7 +94,7 @@ UI_AUTH_PASSWORD = _str("UI_AUTH_PASSWORD", "")
 # --------------------------------------------------------------------------- Feature flags
 # Memory autoscaling is OFF by default — scaling RAM has direct $$ impact and
 # we don't want to encourage it accidentally in a demo. Set to "true" to enable.
-MEMORY_SCALING_ENABLED = _str("MEMORY_SCALING_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+MEMORY_SCALING_ENABLED = _bool("MEMORY_SCALING_ENABLED", False)
 
 # --------------------------------------------------------------------------- Scaling thresholds (WHEN to scale)
 THROUGHPUT_THRESHOLD_PCT = _int("THROUGHPUT_THRESHOLD_PCT", 80)        # % of BASELINE_OPS
@@ -92,7 +114,15 @@ MEMORY_CEILING_GB  = _float("MEMORY_CEILING_GB", 5.0)
 THROUGHPUT_THRESHOLD_OPS = int(BASELINE_OPS * THROUGHPUT_THRESHOLD_PCT / 100)
 
 # --------------------------------------------------------------------------- Scheduled scale-down
+# AUTO_RESET_ENABLED=false suspends the scheduled scale-down entirely: a
+# scaled-up DB stays up until someone resets it manually (UI "Reset now" or
+# POST /api/admin/reset-baseline). Use this for real events where you want the
+# DB to hold its scaled capacity for the whole window (e.g. a live match).
+# A non-positive AUTO_RESET_SECONDS is also treated as disabled.
+AUTO_RESET_ENABLED = _bool("AUTO_RESET_ENABLED", True)
 AUTO_RESET_SECONDS = _int("AUTO_RESET_SECONDS", 300)
+# Single source of truth for "is the scheduler armed at all".
+AUTO_RESET_ACTIVE  = AUTO_RESET_ENABLED and AUTO_RESET_SECONDS > 0
 
 # --------------------------------------------------------------------------- Internal service wiring
 PROMETHEUS_URL       = _str("PROMETHEUS_URL",       "http://prometheus:9090")

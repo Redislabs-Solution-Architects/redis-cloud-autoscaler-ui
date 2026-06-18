@@ -166,6 +166,7 @@ class StateManager:
                     "prom_fetch_err": self.prom_fetch_err,
                 },
                 "auto_reset": {
+                    "enabled":           config.AUTO_RESET_ACTIVE,
                     "scheduled":         self._auto_reset_task is not None,
                     "reset_at":          self.auto_reset_at,
                     "seconds_remaining": (max(0, int(self.auto_reset_at - time.time()))
@@ -412,6 +413,14 @@ class StateManager:
             scaled    = self._is_scaled_above_baseline()
             running   = self.memtier_running
             has_task  = self._auto_reset_task is not None
+
+        # When the scheduled scale-down is suspended (AUTO_RESET_ENABLED=false,
+        # or a non-positive window), the DB stays scaled until a manual reset.
+        # We never arm a countdown, and we tear down any that was in flight.
+        if not config.AUTO_RESET_ACTIVE:
+            if has_task:
+                await self._cancel_reset_locked("suspended")
+            return
 
         if scaled and not running and not has_task:
             logger.info("auto-reset: scheduling (%ss)", self.auto_reset_seconds)

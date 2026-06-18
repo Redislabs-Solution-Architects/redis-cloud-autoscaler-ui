@@ -81,20 +81,26 @@ That's it. The stack:
 4. **Registers** the scaling rule with the Autoscaler — idempotently.
 5. **Streams live state** to your browser over WebSocket.
 
-### Required `.env` fields (5)
+### Required `.env` fields
+
+Fill **TIER 1** in [`.env.example`](.env.example). Six connection values + four sizing values — nothing else is required to start.
 
 | Variable | Where to find it |
 |---|---|
 | `REDIS_HOST_AND_PORT` | Console → your database → *Configuration* → private endpoint |
 | `REDIS_PASSWORD` | Console → your database → *Security* |
-| `REDIS_CLOUD_API_KEY` + `REDIS_CLOUD_ACCOUNT_KEY` | Console → *Access Management* → API Keys *(User Key + Account Key respectively)* |
-| `REDIS_CLOUD_SUBSCRIPTION_ID` + `DEMO_DB_ID` | numeric IDs from the console URLs |
+| `REDIS_CLOUD_ACCOUNT_KEY` | Console → *Access Management* → API Keys → **Account key** (public) |
+| `REDIS_CLOUD_API_KEY` | same screen → **User key** (secret) — its owner needs the **Owner** role, see [API permissions](#-redis-cloud-api-permissions) |
+| `REDIS_CLOUD_SUBSCRIPTION_ID` + `REDIS_CLOUD_DATABASE_ID` | numeric IDs from the console URLs |
+| `BASELINE_OPS` · `BASELINE_MEM_GB` · `BURST_OPS` · `THROUGHPUT_CEILING` | size to **your** DB — see [Running against YOUR account](#running-against-your-redis-cloud-account) |
 
-Everything else (thresholds, branding, scale-down window, auth) ships with sensible defaults — see [`.env.example`](.env.example).
+You do **not** set the metrics endpoint — its host is auto-discovered from the subscription with the same credentials, and the port defaults to the standard `8070`. Everything else (thresholds, branding, scale-down, auth) has sensible defaults. Advanced overrides (metrics host/port, REST API version, internal URLs) live in TIER 3 of `.env.example` and are rarely touched.
+
+> `REDIS_CLOUD_DATABASE_ID` was previously `DEMO_DB_ID`; the old name still works.
 
 ### Running against YOUR Redis Cloud account
 
-The stack is account-agnostic — the five fields above come from *your*
+The stack is account-agnostic — the six connection fields above come from *your*
 console, whatever the account, subscription, or database. But four more
 values **must be sized to your database**, because the defaults describe a
 demo environment, not yours:
@@ -204,9 +210,14 @@ BASELINE_MEM_GB=2.5
 MEMORY_STEP_GB=2                  # +N GB per memory trigger
 MEMORY_CEILING_GB=5
 
-# Scheduled scale-down window
-AUTO_RESET_SECONDS=300            # back to baseline N seconds after a scale-up
+# Scheduled scale-down
+AUTO_RESET_ENABLED=true           # false = SUSPEND it (DB stays scaled until you reset manually)
+AUTO_RESET_SECONDS=300            # if enabled: back to baseline N seconds after a scale-up
 ```
+
+**Holding capacity for a real event?** Set `AUTO_RESET_ENABLED=false`. The DB
+scales up and *stays* up — no automatic scale-down — until you click **Reset
+now** (or `POST /api/admin/reset-baseline`). No need to fake a huge window.
 
 Change anything, then:
 
@@ -236,7 +247,25 @@ These show up in the dashboard header.
 | **Memory scaling** off (`MEMORY_SCALING_ENABLED=false`) | scaling memory has direct cost impact. The dashboard still shows live memory usage as context, but no `IncreaseMemory` alert/rule is created. |
 | **Throughput cap** at `40 000 ops/sec` | covers typical event-driven peaks (live sports / live streaming / voting events around 30 k ops/sec) with headroom, while preventing runaway scale. |
 | **Internal ports** unpublished | only `:8000` (UI) is on the host. Prometheus/Alertmanager/Autoscaler are reachable only from inside the compose network. |
-| **Reactive scale-down** disabled by design | yo-yo migrations destabilize clusters in production. The UI runs a one-shot timer per scale-up event and calls the REST API directly — independently of the autoscaler. |
+| **Reactive scale-down** disabled by design | yo-yo migrations destabilize clusters in production. The UI runs a scheduled timer per scale-up event (suspend it with `AUTO_RESET_ENABLED=false`) and calls the REST API directly — independently of the autoscaler. |
+
+---
+
+## 🔑 Redis Cloud API permissions
+
+For the autoscaler to actually scale your database, the REST API credentials must be allowed to **modify** subscriptions/databases — not just read them.
+
+1. **Enable the API** at the account level: Console → *Access Management* → *API Keys* → **Enable API**. This is an account-**Owner**-only action and produces the **Account key** (your `REDIS_CLOUD_ACCOUNT_KEY`, sent as `x-api-key`).
+2. **Create a User key** (your `REDIS_CLOUD_API_KEY`, sent as `x-api-secret-key`) whose owner has the **Owner** role.
+
+| Role of the User key's owner | Can scale via API? |
+|---|---|
+| **Owner** | ✅ yes — read + write across subscriptions/databases |
+| Viewer / Logs Viewer | ❌ read-only |
+| Billing Admin | ❌ billing endpoints only |
+| Manager / Member | ❌ can edit in the web console, but **cannot hold an API key** at all |
+
+If the role is insufficient, the scale call fails with **HTTP 403** (`not allowed…`); wrong or swapped keys fail with **HTTP 401**. The UI's *Reset now* surfaces these with a hint. Docs: [Access management](https://redis.io/docs/latest/operate/rc/security/access-control/access-management/) · [Manage API keys](https://redis.io/docs/latest/operate/rc/api/get-started/manage-api-keys/).
 
 ---
 
@@ -294,12 +323,14 @@ Caddy fetches and renews the certificate automatically. No certbot, no cron.
 | Symptom | Action |
 |---|---|
 | `Container … exited with code 5` (prometheus / alertmanager) | You're on `docker-compose` v1 — install Compose v2, then `docker compose down -v && docker compose up -d` |
-| `autoscaler-init` exits with code 5 | `docker logs autoscaler-init` — it now prints exactly which check failed (key shape, HTTP code from the REST API, etc) |
+| `autoscaler-init` fails (non-zero exit) | `docker logs autoscaler-init` — it prints exactly which check failed (key shape, HTTP code from the REST API, etc) |
 | **`REST API returned HTTP 500`** in the init logs | `REDIS_CLOUD_API_KEY` ⇄ `REDIS_CLOUD_ACCOUNT_KEY` swapped *(they map to `x-api-secret-key` / `x-api-key` respectively)* |
 | **`looks malformed … (contains space / # / quote)`** in init logs | Inline `# comment` or quotes leaked into a value in `.env`. Move comments above the variables, no quotes on values. |
+| **`HTTP 403`** when scaling (or *Reset now* says "lacks permission") | The User key's owner isn't **Owner** — see [API permissions](#-redis-cloud-api-permissions). Viewer/Logs Viewer can't scale. |
 | UI says `connecting…` forever | `docker compose logs ui` — check for bootstrap errors |
-| Prometheus target `rediscloud` red | network can't reach `<endpoint>:8070` — fix PSC / VPC peering before retrying |
+| Prometheus target `rediscloud` red | network can't reach `<endpoint>:<metrics-port>` — fix PSC / VPC peering before retrying |
 | Autoscaler not reacting to alerts | Open the **Admin** panel → *Reload rules*. Confirm `docker compose logs autoscaler` shows `Received alert` |
+| DB scales up but never comes back down | Expected if `AUTO_RESET_ENABLED=false` (suspended). Use **Reset now**, or set it back to `true` and recreate the UI container. |
 | `Database size is smaller than usage` when downsizing | Admin → *FLUSHDB* (safe — preserves the autoscaler's metadata) before reducing memory |
 | Want to inspect Prometheus directly | use the `docker-compose.expose.yml` overlay |
 

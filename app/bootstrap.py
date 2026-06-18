@@ -85,7 +85,7 @@ def validate_config() -> dict[str, str | bool]:
         dbs = json.loads(r.stdout)["subscription"][0]["databases"]
         db = next((x for x in dbs if int(x["databaseId"]) == config.DB_ID), None)
         if not db:
-            return {"ok": False, "error": f"DEMO_DB_ID={config.DB_ID} not found in subscription {config.REDIS_CLOUD_SUBSCRIPTION_ID}"}
+            return {"ok": False, "error": f"REDIS_CLOUD_DATABASE_ID={config.DB_ID} not found in subscription {config.REDIS_CLOUD_SUBSCRIPTION_ID}"}
         findings.append(f"DB OK: {db.get('name', '?')} · {db['throughputMeasurement']['value']} ops/sec · {db['memoryLimitInGb']} GB")
         # 4. Sanity-check BASELINE_OPS vs reality
         actual_ops = int(db["throughputMeasurement"]["value"])

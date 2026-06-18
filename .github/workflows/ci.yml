@@ -21,6 +21,22 @@ jobs:
         run: |
           python -m compileall -q app/
 
+      - name: Env contract (new name + legacy DEMO_DB_ID alias)
+        env:
+          REDIS_HOST_AND_PORT: test:1
+          REDIS_PASSWORD: test
+          REDIS_CLOUD_API_KEY: test
+          REDIS_CLOUD_ACCOUNT_KEY: test
+          REDIS_CLOUD_SUBSCRIPTION_ID: "1"
+        run: |
+          # preferred name
+          REDIS_CLOUD_DATABASE_ID=42 python -c "import app.config as c; assert c.DB_ID == 42, c.DB_ID"
+          # legacy alias must still resolve
+          DEMO_DB_ID=99 python -c "import app.config as c; assert c.DB_ID == 99, c.DB_ID"
+          # suspend flag
+          AUTO_RESET_ENABLED=false REDIS_CLOUD_DATABASE_ID=1 python -c "import app.config as c; assert c.AUTO_RESET_ACTIVE is False"
+          REDIS_CLOUD_DATABASE_ID=1 python -c "import app.config as c; assert c.AUTO_RESET_ACTIVE is True"
+
       - name: Validate docker-compose.yml
         run: |
           cp .env.example .env
@@ -31,7 +47,7 @@ jobs:
           REDIS_CLOUD_API_KEY=test
           REDIS_CLOUD_ACCOUNT_KEY=test
           REDIS_CLOUD_SUBSCRIPTION_ID=1
-          DEMO_DB_ID=1
+          REDIS_CLOUD_DATABASE_ID=1
           EOF
           docker compose config --quiet
 
