@@ -22,16 +22,49 @@
   let isFirstSnapshot = true;
 
   // ----------------------------------------------------------- chart
+  // Draws a vertical marker wherever the CONFIGURED limit changes — that is
+  // the moment the autoscaler actually resized the database, and it deserves
+  // more than a subtle step in a dashed line.
+  const scaleMarkers = {
+    id: 'scaleMarkers',
+    afterDatasetsDraw(c) {
+      const cfg = c.data.datasets[1] && c.data.datasets[1].data;
+      if (!cfg || cfg.length < 2) return;
+      const { ctx: g, chartArea, scales } = c;
+      g.save();
+      g.font = "10px 'JetBrains Mono', monospace";
+      g.textAlign = 'center';
+      for (let i = 1; i < cfg.length; i++) {
+        if (cfg[i].y === cfg[i - 1].y) continue;
+        const up = cfg[i].y > cfg[i - 1].y;
+        const x = scales.x.getPixelForValue(cfg[i].x);
+        if (x < chartArea.left || x > chartArea.right) continue;
+        g.strokeStyle = up ? 'rgba(255,68,56,0.85)' : 'rgba(128,219,255,0.85)';
+        g.setLineDash([2, 3]);
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(x, chartArea.top + 14);
+        g.lineTo(x, chartArea.bottom);
+        g.stroke();
+        g.setLineDash([]);
+        g.fillStyle = up ? '#ff6b5b' : '#80dbff';
+        g.fillText(up ? '▲ scale-up' : '▼ scale-down', x, chartArea.top + 9);
+      }
+      g.restore();
+    },
+  };
+
   const ctx = $('chart').getContext('2d');
   const chart = new Chart(ctx, {
+    plugins: [scaleMarkers],
     type: 'line',
     data: {
       datasets: [
         {
           label: 'live ops/sec',
           data: [],
-          borderColor: '#DC382D',
-          backgroundColor: 'rgba(220,56,45,0.12)',
+          borderColor: '#FF4438',
+          backgroundColor: 'rgba(255,68,56,0.12)',
           borderWidth: 2.5,
           fill: true,
           tension: 0.35,
@@ -41,8 +74,8 @@
         {
           label: 'configured limit',
           data: [],
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59,130,246,0.05)',
+          borderColor: '#80DBFF',
+          backgroundColor: 'rgba(128,219,255,0.05)',
           borderWidth: 2,
           borderDash: [6, 4],
           stepped: 'before',
@@ -67,8 +100,8 @@
         tooltip: {
           mode: 'index',
           intersect: false,
-          backgroundColor: '#0a0e1a',
-          borderColor: '#1f2937',
+          backgroundColor: '#091A23',
+          borderColor: '#1d3a4a',
           borderWidth: 1,
           titleFont: { family: 'JetBrains Mono, monospace', size: 11 },
           bodyFont:  { family: 'Inter, sans-serif', size: 12 },
@@ -87,7 +120,7 @@
             font: { family: 'JetBrains Mono, monospace', size: 10 },
             callback: (v) => new Date(v).toLocaleTimeString('en-US', { hour12: false }),
           },
-          grid: { color: 'rgba(31,41,55,0.5)' },
+          grid: { color: 'rgba(29,58,74,0.5)' },
         },
         y: {
           beginAtZero: true,
@@ -98,7 +131,7 @@
             font: { family: 'JetBrains Mono, monospace', size: 10 },
             callback: (v) => v >= 1000 ? (v/1000).toFixed(0) + 'k' : v,
           },
-          grid: { color: 'rgba(31,41,55,0.5)' },
+          grid: { color: 'rgba(29,58,74,0.5)' },
         },
       },
     },
@@ -181,7 +214,7 @@
 
     // reset-baseline label
     const lbl = document.getElementById('reset-baseline-label');
-    if (lbl) lbl.textContent = `${fmt(db.baseline_ops)} ops/sec · 2 GB`;
+    if (lbl) lbl.textContent = `${fmt(db.baseline_ops)} ops/sec · ${db.baseline_mem_gb} GB`;
   }
 
   function setLivePanel(live, db, memtier) {
@@ -243,6 +276,49 @@
 
       row.appendChild(name);
       row.appendChild(tag);
+      el.appendChild(row);
+    }
+  }
+
+  // Honest view of the full rule set: what is armed, and what is deliberately
+  // off. Disabled rows stay VISIBLE (greyed) so nobody thinks the autoscaler
+  // lacks the capability; the copy says it is a demo choice.
+  function setPolicyPanel(features, db) {
+    const el = $('policy-list');
+    if (!el || !features) return;
+    const memOn = features.memory_scaling_enabled;
+    const rows = [
+      {
+        on: true,
+        title: 'Throughput scale-up',
+        detail: `${fmt(db.baseline_ops)} → ${fmt(db.burst_ops)} ops/sec on alert · ceiling ${fmt(db.burst_ops)}`,
+      },
+      {
+        on: memOn,
+        title: 'Memory scale-up',
+        detail: memOn
+          ? `+${features.memory_step_gb} GB steps · ceiling ${features.memory_ceiling_gb} GB`
+          : 'supported by the autoscaler; kept off in this demo (growing RAM changes billed capacity instantly). Enable with MEMORY_SCALING_ENABLED=true',
+      },
+      {
+        on: false,
+        byDesign: true,
+        title: 'Reactive scale-down',
+        detail: 'off by design: reacting downward to a quiet minute would yo-yo against real traffic. Scale-down is scheduled instead (card below)',
+      },
+    ];
+    el.innerHTML = '';
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = 'policy-row' + (r.on ? '' : ' policy-off');
+      const chip = r.on
+        ? '<span class="policy-chip on">enabled</span>'
+        : (r.byDesign
+            ? '<span class="policy-chip design">by design</span>'
+            : '<span class="policy-chip off">demo choice</span>');
+      row.innerHTML =
+        `<div class="policy-head"><span class="policy-title">${r.title}</span>${chip}</div>` +
+        `<div class="policy-detail">${r.detail}</div>`;
       el.appendChild(row);
     }
   }
@@ -362,6 +438,21 @@
       return;
     }
 
+    if (r && r.in_flight) {
+      // Reset submitted; Redis Cloud is applying it. The REST API keeps
+      // reporting the scaled size for ~1 min — say so instead of re-arming
+      // a phantom countdown.
+      card.classList.add('active');
+      status.innerHTML = '<span style="color: var(--c-blue)">⏳ scale-down in flight — Redis Cloud is applying the change</span>';
+      cd.textContent = '…';
+      prog.style.width = '100%';
+      prog.classList.add('indeterminate');
+      btnNow.disabled = true;
+      btnCancel.disabled = true;
+      return;
+    }
+    prog.classList.remove('indeterminate');
+
     if (r && r.scheduled && r.seconds_remaining !== null && r.seconds_remaining > 0) {
       // Active countdown — auto-reset is armed
       card.classList.add('active');
@@ -436,6 +527,7 @@
         setDBPanel(s.db);
         setLivePanel(s.live, s.db, s.memtier);
         setAlertsPanel(s.alerts);
+        setPolicyPanel(s.features, s.db);
         setEventsPanel(s.events);
         setMemtier(s.memtier);
         setAutoReset(s.auto_reset, s.db, s.memtier);
@@ -470,7 +562,9 @@
       b.addEventListener('click', () => applyPreset(p.id));
       wrap.appendChild(b);
     }
-    applyPreset('peak');
+    // Default to the second preset (the "makes-the-demo-happen" burst) when
+    // present, else the first. Never reference a preset id that may not exist.
+    if (presets.length) applyPreset((presets[1] || presets[0]).id);
   }
 
   function applyPreset(pid) {
@@ -610,7 +704,7 @@
     'This wipes the customer keys but PRESERVES the autoscaler rules. Continue?'));
   $('btn-reset').addEventListener('click', (e) => adminCall(
     '/api/admin/reset-baseline',
-    'Force-scale the DB back to baseline (1,000 ops/sec · 2 GB)? This bypasses the autoscaler.'));
+    'Force-scale the DB back to its configured baseline? This bypasses the autoscaler.'));
   $('btn-reload-rules').addEventListener('click', (e) => adminCall(
     '/api/admin/reload-rules',
     'Re-register all 4 autoscaler scaling rules? (Safe to run anytime — idempotent.)'));
@@ -634,5 +728,7 @@
   });
 
   // ----------------------------------------------------------- boot
-  loadPresets().then(connect);
+  // The WebSocket must connect even if the presets fetch fails (e.g. a
+  // transient 401/network hiccup) — live state is the heart of the page.
+  loadPresets().catch((e) => console.error('presets:', e)).finally(connect);
 })();

@@ -17,6 +17,12 @@ One `docker compose up -d` away from watching your Redis Cloud Pro database elas
 [Security](#-security--defaults) ·
 [Tutorial 🇧🇷](TUTORIAL.pt-BR.md)
 
+<img src="docs/img/dashboard-scaled.png" alt="Dashboard mid scale-up: alert firing, database scaled from 2,000 to 5,000 ops/sec, scale-up marker on the throughput chart" width="920">
+
+*Live capture during a scale-up: memtier pushes ~535k ops/sec, the `IncreaseThroughput`
+alert fires, and the database is resized 2,000 → 5,000 ops/sec. The chart marks the
+exact moment the autoscaler applied the change.*
+
 </div>
 
 ---
@@ -196,6 +202,21 @@ docker compose -f docker-compose.yml -f docker-compose.expose.yml up -d
 
 ---
 
+## 🖥️ What the dashboard shows
+
+| Card | What it tells the audience |
+|---|---|
+| **DB configured** | the database as Redis Cloud sees it (REST API): status, configured ops/sec vs baseline, dataset size (HA-aware), shards |
+| **Scaling policy** | every rule, honestly: `IncreaseThroughput` enabled with its live alert state; memory scale-up greyed out with the reason it is off; reactive scale-down marked *by design* |
+| **Live metrics** | ops/sec + memory from the native Prometheus endpoint, with % of configured capacity |
+| **Scheduled scale-down** | countdown, cancel/reset controls, and a *scale-down in flight* state while Redis Cloud applies the change |
+| **Throughput over time** | live vs configured limit; vertical markers pin the exact moment of every scale-up/scale-down |
+| **Autoscaler events** | parsed from the autoscaler's own logs: webhook received, scaling call, task queued, cool-down silence |
+| **Load generator** | memtier_benchmark presets + a full manual rig, with the exact command line it will run |
+| **Admin tools** | safe FLUSHDB (preserves autoscaler metadata), force reset to baseline, idempotent rule re-registration |
+
+---
+
 ## 🔧 Configuration
 
 Everything is in [`.env`](.env.example). Quick map:
@@ -253,7 +274,7 @@ These show up in the dashboard header.
 | Default | Why |
 |---|---|
 | **HTTP Basic Auth** off (`UI_AUTH_PASSWORD=`) | open access for quick demos; set any non-empty value to enable. Browser prompts the first time; the WebSocket upgrade carries the same credentials. |
-| **Memory scaling** off (`MEMORY_SCALING_ENABLED=false`) | scaling memory has direct cost impact. The dashboard still shows live memory usage as context, but no `IncreaseMemory` alert/rule is created. |
+| **Memory scaling** off (`MEMORY_SCALING_ENABLED=false`) | scaling memory has direct cost impact, so no `IncreaseMemory` alert/rule is created by default. The dashboard's *Scaling policy* card still shows the rule, greyed out, with the reason: it is a deliberate choice, not a missing capability. Live memory usage stays visible as context. |
 | **Throughput cap** at `40 000 ops/sec` | covers typical event-driven peaks (live sports / live streaming / voting events around 30 k ops/sec) with headroom, while preventing runaway scale. |
 | **Internal ports** unpublished | only `:8000` (UI) is on the host. Prometheus/Alertmanager/Autoscaler are reachable only from inside the compose network. |
 | **Automatic scale-down** off (`AUTO_RESET_ENABLED=false`) | production-safe default: the DB holds its scaled capacity until a manual reset. Reactive/timed scale-down yo-yos against the autoscaler on real traffic. Set `true` only for repeatable demos. |

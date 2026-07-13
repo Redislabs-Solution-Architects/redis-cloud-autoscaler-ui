@@ -3,6 +3,9 @@
 .env.local
 *.env.bak
 
+# local bastion assets (SSH key + rendered env) — never commit
+bastion/
+
 # python
 __pycache__/
 *.pyc

@@ -108,6 +108,9 @@ class StateManager:
         # memlim/baseline ratio (that heuristic breaks the moment we reset
         # to baseline, since memlim then equals BASELINE_MEM_GB).
         self.db_replication: bool = False
+        # datasetSizeInGb as reported by the REST API (newer field). 0 = not
+        # provided, fall back to the memlim/2 heuristic in _dataset_size_gb.
+        self.db_dataset_gb: float = 0.0
         # Live (Prometheus)
         self.live_ops: float = 0.0
         self.live_mem_bytes: float = 0.0
@@ -129,6 +132,11 @@ class StateManager:
         self.auto_reset_at: float | None = None
         self.auto_reset_seconds: int = config.AUTO_RESET_SECONDS
         self.auto_reset_last_action: str = ""
+        # After a reset is submitted, Redis Cloud takes ~1 min to apply it and
+        # the REST API keeps reporting the scaled size meanwhile. Without this
+        # grace window the scheduler would immediately re-arm a fresh countdown
+        # (confusing) and could even fire a redundant second PUT.
+        self.reset_in_flight_until: float = 0.0
 
     # ------------------------------------------------------------------ snapshot
     def snapshot(self) -> dict[str, Any]:
@@ -173,6 +181,12 @@ class StateManager:
                                           if self.auto_reset_at else None),
                     "window_seconds":    self.auto_reset_seconds,
                     "last_action":       self.auto_reset_last_action,
+                    "in_flight":         time.time() < self.reset_in_flight_until,
+                },
+                "features": {
+                    "memory_scaling_enabled": config.MEMORY_SCALING_ENABLED,
+                    "memory_step_gb":         config.MEMORY_STEP_GB,
+                    "memory_ceiling_gb":      config.MEMORY_CEILING_GB,
                 },
                 "branding": {
                     "client_name": config.CLIENT_NAME,
@@ -224,6 +238,7 @@ class StateManager:
                         self.db_name        = db.get("name") or ""
                         self.db_throughput  = int(db["throughputMeasurement"]["value"])
                         self.db_memlim_gb   = float(db["memoryLimitInGb"])
+                        self.db_dataset_gb  = float(db.get("datasetSizeInGb") or 0.0)
                         self.db_replication = bool(db.get("replication", False))
                         self.db_modified    = db.get("lastModified") or ""
                         self.db_fetch_err   = ""
@@ -390,16 +405,19 @@ class StateManager:
     def _dataset_size_gb(self) -> float:
         """The configured dataset size, normalizing for HA.
 
-        Redis Cloud's REST API returns `memoryLimitInGb` already doubled when
-        replication is enabled (because HA needs master + replica memory).
-        The customer-facing "dataset size" in the console is half of that.
-        We compare baselines against dataset size, not raw memory limit.
+        The REST API now reports `datasetSizeInGb` directly (the customer-
+        facing number from the console) — use it when present. Older API
+        responses only had `memoryLimitInGb`, which is already doubled when
+        replication is on (HA needs master + replica memory), so the fallback
+        halves it based on the `replication` boolean.
 
         We rely on the `replication` boolean returned by the REST API — not
         on a memlim/baseline ratio heuristic. The heuristic mis-detected HA
         after a reset (memlim == BASELINE_MEM_GB looked like "no HA" even
         when replication was still true).
         """
+        if self.db_dataset_gb > 0:
+            return self.db_dataset_gb
         if self.db_memlim_gb <= 0:
             return 0.0
         return self.db_memlim_gb / 2 if self.db_replication else self.db_memlim_gb
@@ -408,11 +426,22 @@ class StateManager:
         return (self.db_throughput > config.BASELINE_OPS or
                 self._dataset_size_gb() > config.BASELINE_MEM_GB + 0.01)
 
+    # How long to trust that a submitted reset is being applied by Redis
+    # Cloud before the scheduler is allowed to re-arm. Applying a throughput
+    # change typically takes ~1 min; 4 min gives slow tasks headroom without
+    # ever firing a redundant second PUT.
+    RESET_APPLY_GRACE_S = 240
+
     async def _maybe_manage_reset(self) -> None:
         with self._lock:
             scaled    = self._is_scaled_above_baseline()
             running   = self.memtier_running
             has_task  = self._auto_reset_task is not None
+            in_flight = time.time() < self.reset_in_flight_until
+            if in_flight and not scaled:
+                # Redis Cloud finished applying the reset — leave in-flight.
+                self.reset_in_flight_until = 0.0
+                in_flight = False
 
         # When the scheduled scale-down is suspended (AUTO_RESET_ENABLED=false,
         # or a non-positive window), the DB stays scaled until a manual reset.
@@ -420,6 +449,12 @@ class StateManager:
         if not config.AUTO_RESET_ACTIVE:
             if has_task:
                 await self._cancel_reset_locked("suspended")
+            return
+
+        # A reset was already submitted and Redis Cloud is applying it: the
+        # API still reports the scaled size, but re-arming now would start a
+        # phantom countdown (and eventually a redundant PUT).
+        if in_flight:
             return
 
         if scaled and not running and not has_task:
@@ -441,6 +476,8 @@ class StateManager:
             res = await loop.run_in_executor(None, admin.reset_to_baseline)
             with self._lock:
                 self.auto_reset_last_action = "reset: " + (res.get("message", "") or "done")
+                if res.get("ok"):
+                    self.reset_in_flight_until = time.time() + self.RESET_APPLY_GRACE_S
         except asyncio.CancelledError:
             with self._lock:
                 self.auto_reset_last_action = "cancelled"
@@ -478,6 +515,8 @@ class StateManager:
         res = await loop.run_in_executor(None, admin.reset_to_baseline)
         with self._lock:
             self.auto_reset_last_action = "manual_reset: " + (res.get("message", "") or "done")
+            if res.get("ok"):
+                self.reset_in_flight_until = time.time() + self.RESET_APPLY_GRACE_S
         return res
 
     # ------------------------------------------------------------------ run loop
