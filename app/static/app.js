@@ -280,9 +280,9 @@
     }
   }
 
-  // Honest view of the full rule set: what is armed, and what is deliberately
-  // off. Disabled rows stay VISIBLE (greyed) so nobody thinks the autoscaler
-  // lacks the capability; the copy says it is a demo choice.
+  // Honest view of the FULL upstream rule set (all four ruleTypes). Rules
+  // this demo keeps off stay VISIBLE, greyed, with the reason: the autoscaler
+  // has the capability, the demo config chose not to arm it.
   function setPolicyPanel(features, db) {
     const el = $('policy-list');
     if (!el || !features) return;
@@ -291,20 +291,28 @@
       {
         on: true,
         title: 'Throughput scale-up',
-        detail: `${fmt(db.baseline_ops)} → ${fmt(db.burst_ops)} ops/sec on alert · ceiling ${fmt(db.burst_ops)}`,
+        rule: 'IncreaseThroughput',
+        detail: `${fmt(db.baseline_ops)} → ${fmt(db.burst_ops)} ops/sec on alert (webhook) · ceiling ${fmt(db.burst_ops)}`,
+      },
+      {
+        on: false,
+        title: 'Throughput scale-down',
+        rule: 'DecreaseThroughput',
+        detail: 'the autoscaler supports it as a SCHEDULED (cron) rule, never reactive: shrinking on a quiet minute would yo-yo against real traffic. This demo returns to baseline with the scheduled reset below instead',
       },
       {
         on: memOn,
         title: 'Memory scale-up',
+        rule: 'IncreaseMemory',
         detail: memOn
-          ? `+${features.memory_step_gb} GB steps · ceiling ${features.memory_ceiling_gb} GB`
-          : 'supported by the autoscaler; kept off in this demo (growing RAM changes billed capacity instantly). Enable with MEMORY_SCALING_ENABLED=true',
+          ? `+${features.memory_step_gb} GB steps on alert (webhook) · ceiling ${features.memory_ceiling_gb} GB`
+          : 'fully supported by the autoscaler; this demo ships it disabled because growing RAM changes billed capacity instantly. One flag turns it on: MEMORY_SCALING_ENABLED=true',
       },
       {
         on: false,
-        byDesign: true,
-        title: 'Reactive scale-down',
-        detail: 'off by design: reacting downward to a quiet minute would yo-yo against real traffic. Scale-down is scheduled instead (card below)',
+        title: 'Memory scale-down',
+        rule: 'DecreaseMemory',
+        detail: 'supported as a SCHEDULED (cron) rule, same anti-yo-yo rule as throughput. Off here together with memory scaling',
       },
     ];
     el.innerHTML = '';
@@ -313,11 +321,10 @@
       row.className = 'policy-row' + (r.on ? '' : ' policy-off');
       const chip = r.on
         ? '<span class="policy-chip on">enabled</span>'
-        : (r.byDesign
-            ? '<span class="policy-chip design">by design</span>'
-            : '<span class="policy-chip off">demo choice</span>');
+        : '<span class="policy-chip off">off via config</span>';
       row.innerHTML =
-        `<div class="policy-head"><span class="policy-title">${r.title}</span>${chip}</div>` +
+        `<div class="policy-head"><span class="policy-title">${r.title}</span>` +
+        `<span class="policy-rule">${r.rule}</span>${chip}</div>` +
         `<div class="policy-detail">${r.detail}</div>`;
       el.appendChild(row);
     }
